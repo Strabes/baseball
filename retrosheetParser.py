@@ -209,6 +209,22 @@ def _playSplitter(play):
            'advs': advs})
         
 def _subeventParser(s):
+    '''
+    Function for producing details of individual components of
+    the event play - i.e. subevents
+    
+    Parameters
+    -------------
+    s : string that represents the subevent 
+    
+    Returns
+    -------------
+    dict : dict contains:
+         basicPlay: string with description of the subevent
+         playersOut: list of players that are out on subevent
+         implicitAdvances: list of implicit advances that may be
+             missing from the play advance field
+    '''
     playersOut = []
     implicitAdvances = []
     if re.match("[1-9]+(\([1-3B]\))?$",s) is not None:
@@ -385,6 +401,19 @@ def fullPlayDesc(subevents):
 
 
 def playersOut(playSplit,subeventsParsed):
+    '''
+    Function for getting the list of players out on the play
+    
+    Parameters
+    -------------
+    playSplit : dictionary containing 'advs' - list of advances from the advances field
+    subeventsParsed : list of dictionaries containing parsed subevents.
+       Each dictionary must contain the key 'playersOut'
+    
+    Returns
+    -------------
+    playersOutList : list of players out on the play
+    '''
     subeventsOuts = [j for i in subeventsParsed for j in i['playersOut']]
     # handle outs from advances:
     advNotOut = []
@@ -404,6 +433,20 @@ def playersOut(playSplit,subeventsParsed):
 
 
 def playerAdvances(playSplit,subeventsParsed):
+    '''
+    Function for getting ALL player advances
+    
+    Parameters
+    -------------
+    playSplit : dictionary containing 'advs' - list of advances from the advances field
+    subeventsParsed : list of dictionaries containing parsed subevents.
+       Each dictionary must contain the key 'implicitAdvances'
+    
+    Returns
+    -------------
+    dict : dictionary of player advances where key is the initial base position
+        and value is the final base position
+    '''
     advances = dict()
     implicitAdvances = [j for i in subeventsParsed for j in i['implicitAdvances']]
     advs = playSplit['advs']
@@ -418,6 +461,9 @@ def playerAdvances(playSplit,subeventsParsed):
     finalAdvs = list(set(advsNotOut + implicitAdvances) - set(ria))
     return({i[0]:i[2] for i in finalAdvs})
 
+def runsScored(playerAdvances):
+    runs = sum([i == 'H' for i in playerAdvances.values()])
+    return(runs)
 
 def enhancePlays(plays):
     '''
@@ -441,6 +487,7 @@ def enhancePlays(plays):
     .assign(playersOut = lambda x: x.apply(lambda z: playersOut(z.playSplit,z.subeventParsed), axis = 1))
     .assign(outsOnPlay = lambda x: x.playersOut.apply(len))
     .assign(playerAdvances = lambda x: x.apply(lambda z: playerAdvances(z.playSplit,z.subeventParsed), axis = 1))
+    .assign(runsScored = lambda x: x.playerAdvances.transform(runsScored))
     )
     return(new_df)
 
