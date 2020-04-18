@@ -28,24 +28,24 @@ def RetrosheetEventFormatter(lst,incComInPlays = True):
             [j.split(",")[1:] for j in lst if j.startswith("info,")],
             columns = ['Key','Value'])
     )
-    if incComInPlays:
-        playsAndComments = [j for j in lst if re.match("((play)|(com)),",j) is not None]
-        t = 0
-        for i,j in enumerate(playsAndComments):
-            if re.match("play,",j):
-                playsAndComments[i] = j.split(",")
-                playsAndComments[i].append("")
-                t = 1
-            elif re.match("com,",j):
-                playsAndComments[i] = ['com'] + ['']*6 + [j.split(",")[1].strip('"').strip('$ ')]
-                if t >= 0:
-                    playsAndComments[i-t][7] = (playsAndComments[i-t][7] + " " + playsAndComments[i][7]).strip(" ")
-                    t+=1
+    
+    playsAndComments = [j for j in lst if re.match("((play)|(com)),",j) is not None]
+    t = 0
+    for i,j in enumerate(playsAndComments):
+        if re.match("play,",j):
+            playsAndComments[i] = j.split(",")
+            playsAndComments[i].append("")
+            t = 1
+        elif re.match("com,",j):
+            playsAndComments[i] = ['com'] + ['']*6 + [j.split(",")[1].strip('"').strip('$ ')]
+            if t >= 0:
+                playsAndComments[i-t][7] = (playsAndComments[i-t][7] + " " + playsAndComments[i][7]).strip(" ")
+                t+=1
         
     d['plays'] = (
         pd.DataFrame(
             #[j.split(",")[1:] for j in lst if j.startswith("play,")],
-            playsAndComments,
+            [j for j in playsAndComments if j[0] == 'play'],
             columns = ["Type","Inning","Team","PlayerID","Count","PitchSequence","Play","Comment"])
     )
     d['starters'] = (
@@ -207,11 +207,6 @@ def _playSplitter(play):
     return({'event': event,
            'mods': mods,
            'advs': advs})
-
-def _eventParser(event):
-    addnlInfo = event
-    if re.match(".+\+.+",event):
-        addnlInfo = re.sub(".+\+","",event)
         
 def _subeventParser(s):
     playersOut = []
@@ -408,192 +403,53 @@ def playersOut(playSplit,subeventsParsed):
     return(playersOutList)
 
 
-def playParser(play):
+def playerAdvances(playSplit,subeventsParsed):
+    advances = dict()
+    implicitAdvances = [j for i in subeventsParsed for j in i['implicitAdvances']]
+    advs = playSplit['advs']
+    advsNotOut = []
+    for i in advs:
+        if re.match('[1-3B]X[1-3H].*E',i):
+            # error on the play, so player did advance
+            advsNotOut.append(i[0:3])
+        elif re.match('[1-3B]-[1-3H]',i):
+            advsNotOut.append(i[0:3])
+    ria = list(set([i for i in implicitAdvances for j in advs if i[0] == j[0]]))
+    finalAdvs = list(set(advsNotOut + implicitAdvances) - set(ria))
+    return({i[0]:i[2] for i in finalAdvs})
+
+
+def enhancePlays(plays):
     '''
-    Funtion for parsing out the Play field of a Retrosheet event file
-    
+    Funtion for applying retrosheetParser functions to create
+    additional attribution
     Parameters
     -------------
-    play : str that contains the play field of a Retrosheet event file
+    plays : pandas DataFrame containing column 'Play'
     
     Returns
     -------------
-    dict : 
+    new_df : pandas DataFrame with additional attribution
     '''
-    # get dict of event, mod and advs (each are lists)
-    playSplit = _playSplitter(play)
-    
-    event = playSplit['event']
-    mods = playSplit['mods']
-    advs = playSplit['advs']
-    
-    batterOut = False # was the batter out on the play?
-    errorInd = False
-    playersOut = [] # list of base runners out on play
-    # handle fielding outs as main event:
-    if re.match("[1-9]",event) is not None:
-        for e in _event_splitter(event):
-            if re.match("[1-9]+(\([1-3B]\))?$",e) is not None:
-                # no error, player is out
-                pOut = [re.sub("\(|\)","",i) for i in re.findall("\([1-3B]\)",e)]
-                if len(pOut) == 0:
-                    batterOut = True
-                    playersOut.append('B')
-                else:
-                    if pOut[0] == 'B':
-                        batterOut = True
-                        playersOut.append('B')
-                    else:
-                        playersOut.append(pOut[0])
-            elif re.match("[1-9]+(\([1-3B]\))?.*E[1-9]",e) is not None:
-                # there was an error - currently assuming no out
-                errorInd = True
-        if len(playersOut) == 1:
-            p = 'Out'
-        elif len(playersOut) == 2:
-            p = 'Double Play'
-        elif len(playersOut) == 3:
-            p = 'Triple Play'
-        else:
-            p = 'Error'
-            
-    elif re.match('FC',event):
-        p = "Fielder's Choice"
-    elif re.match('C$',event):
-        p = 'Interference'
-    elif re.match('NP',event):
-        p = 'No Play'
-    elif re.match('K',event):
-        p = 'Strikeout'
-        batterOut = True
-        for adv in advs:
-            if re.search('B-[1-3H]',adv) is not None:
-                batterOut = False
-        if re.match('K\+',event) is not None:
-            for e in _event_splitter(re.sub('^K\+','',event)):
-                if re.match('(?:CS|PO)[1-3H].*E[1-9]',e) is not None:
-                    # there was an error
-                    pass
-                elif re.match('(?:CS|PO)[1-3H]',e) is not None:
-                    brcspo = [re.sub('(?:CS|PO)','',i) for i in re.findall('(?:CS|PO)[1-3H]',e)]
-                    for br in brcspo:
-                        if len(advs) == 0 or sum([re.search(br + '-',adv) is not None for adv in advs]) > 0:
-                            playersOut.append(br)
-    elif re.match('^H[^P]',event):
-        p = 'Hit - Home Run'
-    elif re.match('^HP',event):
-        p = 'Hit by Pitch'
-    elif re.match('^S[1-9]*$',event):
-        p = 'Hit - Single'
-    elif re.match('^D[1-9]*$',event):
-        p = 'Hit - Double'
-    elif re.match('^DGR',event):
-        p = 'Hit - Ground Rule Double'
-    elif re.match('^T[1-9]*$',event):
-        p = 'Hit - Triple'
-    elif re.search('CS[2-3H]',event) is not None:
-        if re.search('POCS[2-3H].*E[1-9]',event) is not None:
-            p = 'Picked Off Base - Runner Caught Stealing - Error'
-        elif re.search('CS[2-3H].*E[1-9]',event) is not None:
-            p = 'Runner Caught Stealing - Error'
-        elif re.search('POCS[2-3H]',event):
-            
-            p = 'Picked Off Base - Runner Caught Stealing'
-        for r in re.findall('CS[2-3H](?:\([1-9]*E[1-9])?',event):
-            if re.search("E[1-9]",r) is not None:
-                p = 'Caught - Error'
-            bbs = r.strip('CS')
-            if bbs == 'H':
-                br = '3'
-            elif bbs == '3':
-                br = '2'
-            elif bbs == '2':
-                br = '1'
-            if sum([re.search(br + '-',adv) is not None for adv in advs]) == 0:
-                playersOut.append(br)
-    elif re.match('WP',event):
-        p = 'Wild Pitch'
-    elif re.match('W(\+|$)',event):
-        p = 'Walk'
-    elif re.match('IW',event):
-        p = 'Intentional Walk'
-    elif re.match('PB',event):
-        p = 'Passed Ball'
-    elif re.match('SB(2|3|H)?',event):
-        p = 'Stolen Base'
-    elif re.match('E[0-9]',event):
-        p = 'Error'
-    elif re.match('DI',event):
-        p = 'Defensive Indifference'
-    elif re.match('PO(?:CS)?[1-3]',event):
-        p = 'Picked Off Base'
-        for r in re.findall('PO(?:CS)?[1-3](?:\([1-9]*E[1-9])?',event):
-            if re.search("E[1-9]",r) is not None:
-                p = 'Picked Off Base - Error'
-            else:
-                br = re.sub('PO(CS)?','',r)
-                if (len(advs) == 0 or
-                sum([re.search(br + '-',adv) is None for adv in advs]) > 0):
-                    playersOut.append(br)
-    #elif re.match('POCS[2-3H]',event):
-    #    p = 'Caught Stealing'
-    elif re.match('BK',event):
-        p = 'Balk'
-    elif re.match('OA',event):
-        p = 'Other Baserunner Advance'
-    elif re.match('FLE',event):
-        p = 'Error on Foul Flyball'
-    else:
-        p = ''
-    
-    # Check for outs made in advances section:
-    for a in advs:
-        if re.match('[1-3B]X[1-3H]',a) is not None:
-            br = re.split('X',a)[0]
-            if re.match('[1-3B]X[1-3H]\([^\(]*E[1-9].*\)',a) is not None:
-                # there was an error
-                pass
-            else:
-                # No error - runner is out
-                if br == 'B':
-                    batterOut = True
-                playersOut.append(br)
-    
-    # Does basic event contain error?
-    error = re.search('E[1-9]',event) is not None
-    
-    playersOut = list(set(playersOut))
-    
-    baseRunnersOut = playersOut.copy()
-    
-    try:
-        baseRunnersOut.remove('B')
-    except:
-        pass
-    
-    return({'basicPlay':p,
-            'batterOut':batterOut,
-            'baseRunnersOut':baseRunnersOut})
+    new_df = (plays
+    .query("Type == 'play'")
+    .assign(playSplit = lambda x: x.Play.transform(_playSplitter))
+    .assign(subevents = lambda x: x.playSplit.apply(lambda z: _subevent_splitter(z['event'])))
+    .assign(subeventParsed = lambda x: x.subevents.apply(lambda z: [_subeventParser(j) for j in z]))
+    .assign(basicPlayDesc = lambda x: x.subeventParsed.transform(basicPlayDesc))
+    .assign(fullPlayDesc = lambda x: x.subeventParsed.transform(fullPlayDesc))
+    .assign(playersOut = lambda x: x.apply(lambda z: playersOut(z.playSplit,z.subeventParsed), axis = 1))
+    .assign(outsOnPlay = lambda x: x.playersOut.apply(len))
+    .assign(playerAdvances = lambda x: x.apply(lambda z: playerAdvances(z.playSplit,z.subeventParsed), axis = 1))
+    )
+    return(new_df)
 
-def basicPlay(parsedPlay):
-    return(parsedPlay['basicPlay'])
-
-def batterOut(parsedPlay):
-    return(parsedPlay['batterOut'])
-
-def baseRunnersOut(parsedPlay):
-    return(parsedPlay['baseRunnersOut'])
-
-def outsOnPlay(parsedPlay):
-    outs = parsedPlay['batterOut'] + len(parsedPlay['baseRunnersOut'])
-    return(outs)
-
-def runsScored(parsedPlay):
-    rs = 0
-    if parsedPlay == 'Hit - Home Run':
-        rs += 1
-    runnersScored = len(re.findall('-H',play.split("\.")[-1]))
-    return(rs+runnersScored)
+def combineGames(games):
+    combinedGames = pd.concat([(games[i]['plays']
+        .assign(Game = games[i]['id'])
+        .set_index(['Game',games[i]['plays'].index])
+        .rename_axis(['Game','PlayNum'])) for i in range(len(games))])
+    return(combinedGames)
 
 def RetrosheetToJson(lst):
     d = RetrosheetEventFormatter(lst)
