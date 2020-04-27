@@ -11,11 +11,20 @@ from more_itertools import split_before
 def RetrosheetEventFormatter(lst,incComInPlays = True):
     '''
     Function for ingesting a single game in Retrosheet event format
-    and creating a dictionary from it that contains pandas DataFrames for:
-    1. info
-    2. plays
-    3. starters
-    4. subs
+    and creating a dictionary from it that contains pandas DataFrames.
+    
+    Parameters
+    -------------
+    lst : list that contains one element for each line in a
+          retrosheet event file corresponding to a specific game
+    
+    Returns
+    -------------
+    dict : dict contains:
+        1. info
+        2. plays
+        3. starters
+        4. subs
     '''
     d = {}
     ID = lst[0].split(",")
